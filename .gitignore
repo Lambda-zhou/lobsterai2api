@@ -24,3 +24,9 @@ data/
 # OS
 .DS_Store
 Thumbs.db
+
+# 本地工作目录 / 笔记（禁止提交）
+temp/
+project_memory.md
+dist/
+build/
