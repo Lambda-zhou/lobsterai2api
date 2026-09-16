@@ -9,6 +9,8 @@ data/
 *.dll
 *.so
 *.dylib
+__pycache__/
+*.pyc
 
 # Go 构建缓存
 *.test
