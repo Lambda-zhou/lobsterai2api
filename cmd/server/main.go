@@ -45,8 +45,11 @@ func main() {
 		p.Add(a)
 	}
 
-	up := upstream.New()
+	up := upstream.NewWithBase(cfg.Upstream.BaseURL)
 	up.HTTP.Timeout = time.Duration(cfg.Upstream.TimeoutSeconds) * time.Second
+	if cfg.Upstream.BaseURL != "" {
+		log.Printf("upstream base overridden by config: %s", cfg.Upstream.BaseURL)
+	}
 
 	sch := scheduler.New(scheduler.Config{
 		Pool:           p,

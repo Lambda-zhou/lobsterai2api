@@ -40,6 +40,7 @@ type apiEnvelope struct {
 // Client 上游 HTTP 客户端。
 type Client struct {
 	HTTP     *http.Client
+	Base     string // 上游 API base URL；为空时回退 LB2A_UPSTREAM_BASE 环境变量
 	LastBody []byte // 最近一次非 2xx 响应体，供调用方 Classify
 }
 
@@ -53,6 +54,21 @@ func New() *Client {
 	return &Client{
 		HTTP: &http.Client{Timeout: 180 * time.Second, Transport: tr},
 	}
+}
+
+// NewWithBase 用显式 base URL 构造客户端（base 为空时回退环境变量）。
+func NewWithBase(base string) *Client {
+	c := New()
+	c.Base = strings.TrimSpace(base)
+	return c
+}
+
+// base 返回本次请求使用的上游 base URL：Client.Base 优先，否则取环境变量。
+func (c *Client) base() string {
+	if b := strings.TrimSpace(c.Base); b != "" {
+		return strings.TrimRight(b, "/")
+	}
+	return ServerBase()
 }
 
 func truncate(s string, n int) string {
@@ -113,7 +129,7 @@ func (c *Client) RefreshToken(a *auth.Auth) error {
 	if strings.TrimSpace(a.RefreshToken) == "" {
 		return fmt.Errorf("no refreshToken")
 	}
-	url := ServerBase() + "/api/auth/refresh"
+	url := c.base() + "/api/auth/refresh"
 	body := a.KeyfromBody()
 	body["refreshToken"] = a.RefreshToken
 	raw, _ := json.Marshal(body)
@@ -198,7 +214,7 @@ func prepareChatBody(rawBody []byte) []byte {
 // 非 2xx 时 rc 为 nil、status 为上游状态码、err 为 nil（body 在 c.LastBody，
 // 调用方用 Classify(status, body) 判定）；只有传输层失败才返回 err。
 func (c *Client) ChatStream(a *auth.Auth, body []byte) (rc io.ReadCloser, status int, err error) {
-	url := ServerBase() + "/api/proxy/v1/chat/completions"
+	url := c.base() + "/api/proxy/v1/chat/completions"
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(prepareChatBody(body)))
 	if err != nil {
 		return nil, 0, err
@@ -225,7 +241,7 @@ func (c *Client) ChatStream(a *auth.Auth, body []byte) (rc io.ReadCloser, status
 // GET {server}/api/models/available，Bearer accessToken。
 // 返回模型 ID 列表；失败返回错误（调用方回退静态表）。
 func (c *Client) FetchModels(a *auth.Auth) ([]string, error) {
-	url := ServerBase() + "/api/models/available"
+	url := c.base() + "/api/models/available"
 	body := a.KeyfromBody()
 	// build query string from keyfrom
 	parts := make([]string, 0)
@@ -282,7 +298,7 @@ func (c *Client) FetchModels(a *auth.Auth) ([]string, error) {
 // GET {server}/api/user/profile-summary 的 totalCreditsRemaining（含 free + campaign 活动积分）。
 // 注意: /api/user/quota 只显示 freeCreditsTotal=300, 不含 5000 活动积分。
 func (c *Client) QuotaUsage(a *auth.Auth) (remain int64, total int64, err error) {
-	url := ServerBase() + "/api/user/profile-summary"
+	url := c.base() + "/api/user/profile-summary"
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return 0, 0, err

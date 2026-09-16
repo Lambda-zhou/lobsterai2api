@@ -30,12 +30,14 @@ import (
 
 const (
 	clientUA        = "LobsterAI/0.1.0"
-	stateFile       = "/tmp/lb2api-login-state.json"
 	authsDir        = "./auths"
 	callbackPath    = "/auth/callback"
 	callbackTimeout = 10 * time.Minute
 	loginCallbackHost = "127.0.0.1"
 )
+
+// stateFile 用系统临时目录，跨平台（原硬编码 /tmp 在 Windows 不存在，导致登录直接报错）。
+var stateFile = filepath.Join(os.TempDir(), "lb2api-login-state.json")
 
 // serverBase reads upstream API base from LB2A_UPSTREAM_BASE env.
 func serverBase() string {

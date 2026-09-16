@@ -30,7 +30,8 @@ type Config struct {
 	} `json:"schedule"`
 
 	Upstream struct {
-		TimeoutSeconds int `json:"timeout_seconds"` // 默认 180
+		TimeoutSeconds int    `json:"timeout_seconds"` // 默认 180
+		BaseURL        string `json:"base_url"`        // 上游 API base URL（可选）；为空时取 LB2A_UPSTREAM_BASE 环境变量
 	} `json:"upstream"`
 
 	// 解析后
