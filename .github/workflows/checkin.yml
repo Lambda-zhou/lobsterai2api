@@ -1,23 +1,23 @@
-name: 每日签到
+# name: 每日签到
 
-on:
-  schedule:
-    - cron: '0 0 * * *'   # UTC 00:00 = 北京时间 08:00
-  workflow_dispatch:      # 手动触发（Actions 页面 "Run workflow"）
+# on:
+#   schedule:
+#     - cron: '0 0 * * *'   # UTC 00:00 = 北京时间 08:00
+#   workflow_dispatch:      # 手动触发（Actions 页面 "Run workflow"）
 
-jobs:
-  checkin:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
+# jobs:
+#   checkin:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: actions/setup-python@v5
+#         with:
+#           python-version: '3.x'
 
-      - name: 执行签到
-        env:
-          # 在 GitHub 仓库 Settings → Secrets → Actions 添加 LB2A_AUTHS，
-          # 值为 auth 文档的 JSON 数组：[{"auth":{...},"account":{...}}, ...]
-          # 生成方法：本地 auths/ 目录下的 lobsterai-*.json 合并成数组即可。
-          LB2A_AUTHS: ${{ secrets.LB2A_AUTHS }}
-        run: python scripts/checkin.py
+#       - name: 执行签到
+#         env:
+#           # 在 GitHub 仓库 Settings → Secrets → Actions 添加 LB2A_AUTHS，
+#           # 值为 auth 文档的 JSON 数组：[{"auth":{...},"account":{...}}, ...]
+#           # 生成方法：本地 auths/ 目录下的 lobsterai-*.json 合并成数组即可。
+#           LB2A_AUTHS: ${{ secrets.LB2A_AUTHS }}
+#         run: python scripts/checkin.py
