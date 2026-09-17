@@ -1,0 +1,23 @@
+name = "lobsterai2api-cf"
+main = "src/worker.mjs"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+[vars]
+UPSTREAM_BASE = "https://lobsterai-server.youdao.com"
+# Optional: pin the official activity client version; otherwise resolve via update API.
+# CLIENT_VERSION = "..."
+
+[[durable_objects.bindings]]
+name = "COORDINATOR"
+class_name = "Coordinator"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Coordinator"]
+
+[triggers]
+# UTC 00:00 = Asia/Shanghai 08:00. Alarms process one account at a time.
+crons = ["0 0 * * *"]
+
+# Set API_KEY and ADMIN_KEY via Cloudflare secrets, never here.
