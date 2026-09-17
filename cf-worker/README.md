@@ -3,6 +3,32 @@
 将 LobsterAI 上游转换为 OpenAI 兼容 API 的 Cloudflare Workers 移植（原 Go 版 lobsterai2api 的 Workers 重写）。
 **凭证保管、签到、余额维护全部在 CF 完成，无需 GitHub Actions 参与。**
 
+## 直接在 Cloudflare 设置中导入账号（推荐）
+
+无需 Postman，也没有 `/admin` 网页。更新到支持本功能的版本后：
+
+1. 打开 Worker → **Settings → Variables and Secrets → Add**。
+2. 类型选 **Secret**，名称填 **`LB2A_AUTHS`**（运行时 Secret，不是 Builds 的构建密钥）。
+3. 值粘贴你自己的账号凭证 JSON 全文，保存并部署。已有登录工具输出的 `{ "auth": {...}, "account": {...} }` 可直接使用；也支持下方扁平格式。
+4. 在聊天客户端配置本 Worker 的 `/v1` 地址与 `API_KEY`，发送一次请求；或者等待下一次 cron 维护。进入 Durable Object 的受鉴权请求/定时维护会先导入账号，`/health` 不触发导入。
+
+```json
+{
+  "uid": "你的真实UID",
+  "accessToken": "你的真实访问令牌",
+  "refreshToken": "你的真实刷新令牌",
+  "firstKeyfrom": "保留原凭证值",
+  "latestKeyfrom": "保留原凭证值"
+}
+```
+
+- 示例不是可用凭证；`uid` 必须是字符串，`accessToken` 必填，建议完整保留原文件中的刷新凭证及其他字段。多账号填 JSON 数组，池上限为 20。
+- `API_KEY` / `ADMIN_KEY` 仍必须分别配置、不同且各至少 32 字符。不要把账号 JSON 填进这两个密钥，也不要把任何真实凭证提交到 Git。
+- 按账号保存规范化凭证的 SHA-256 指纹；相同配置只导入一次，DO 重启、JSON 排版/字段顺序变化、新增其他账号都不会覆盖已刷新的 token。修改某账号的凭证后，该账号会重新导入一次。
+- 同一批凭证与去重标记原子写入；无效 JSON、重复 UID、超限批次返回 `503 configuration_error`，不会部分导入。修正或删除错误 Secret 并部署后再试。
+- 删除 Secret 或移除其中某个账号**不删除**已持久化账号；DO 中的刷新凭证也不会自动回写到 Cloudflare Secret。首次启用时，Secret 中的凭证会作为显式导入覆盖同 UID 已存凭证，请使用最新凭证。
+- 鉴权管理接口 `/admin/status` 可查看导入结果；聊天请求成功才是上游可用性的验证，`/health` 只表示 Worker 存活。
+
 ## 结构
 
 | 文件 | 职责 |
@@ -54,7 +80,7 @@ wrangler secret put ADMIN_KEY  # /admin 鉴权
 ## 本地验证
 
 ```bash
-node --test test/worker.test.mjs   # 16 项断言：协议转换、鉴权比较、SSE 聚合、池调度/轮转、维护、上游错误映射、刷新失败与静态回退回归
+node --test test/worker.test.mjs   # 26 项断言：协议转换、鉴权比较、SSE 聚合、池调度/轮转、维护、上游错误映射、刷新失败与静态回退回归、Secret 导入
 # 注意：Node ≥ 21 把无扩展名的 `test/` 当模块解析，`node --test test/` 会 MODULE_NOT_FOUND；须写全文件名
 ```
 

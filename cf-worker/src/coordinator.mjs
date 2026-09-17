@@ -168,6 +168,40 @@ export class Coordinator {
     merged.refreshPending = false;
     return merged;
   }
+  async bootstrapAccounts() {
+    const raw = this.env.LB2A_AUTHS;
+    if (raw === undefined || raw === null || raw === '') return;
+    let docs;
+    try {
+      if (typeof raw !== 'string' || new TextEncoder().encode(raw).length > 1048576) throw new Error();
+      const input = JSON.parse(raw);
+      docs = Array.isArray(input) ? input : [input];
+      if (!docs.length || docs.length > 20) throw new Error();
+      docs = docs.map(normalizeAccount);
+      if (new Set(docs.map(a => a.uid)).size !== docs.length) throw new Error();
+    } catch {
+      throw new GatewayError(503, 'configuration_error', 'LB2A_AUTHS must contain 1–20 valid, unique account objects.');
+    }
+    const existing = await this.accounts();
+    const previous = new Map(existing.map(a => [a.uid, a]));
+    if (new Set([...previous.keys(), ...docs.map(a => a.uid)]).size > 20) {
+      throw new GatewayError(503, 'configuration_error', 'LB2A_AUTHS would exceed the 20-account pool limit.');
+    }
+    const writes = {};
+    for (const a of docs) {
+      // Hash normalized credentials, not raw JSON: whitespace/order changes and adding
+      // another account must never restore old tokens over a refreshed account.
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(a)));
+      const fingerprint = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+      const marker = `secret-import:${a.uid}`;
+      if (await this.storage.get(marker) === fingerprint) continue;
+      writes[`account:${a.uid}`] = this.mergeAccount(previous.get(a.uid), a);
+      writes[marker] = fingerprint;
+    }
+    // One atomic multi-key write: credentials and their dedup marker commit together.
+    // Deleting the Secret (or an entry) does not delete the persisted accounts.
+    if (Object.keys(writes).length) await this.storage.put(writes);
+  }
   async importAccounts(request) {
     const input = await readJSON(request);
     const docs = Array.isArray(input) ? input : [input];
@@ -231,6 +265,7 @@ export class Coordinator {
     return this.locked(async () => {
       try {
         const path = new URL(request.url).pathname;
+        await this.bootstrapAccounts();
         if (path === '/v1/chat/completions' && request.method === 'POST') return await this.chat(request);
         if (path === '/v1/models' && request.method === 'GET') return await this.models();
         if (path === '/admin/accounts' && request.method === 'POST') return await this.importAccounts(request);

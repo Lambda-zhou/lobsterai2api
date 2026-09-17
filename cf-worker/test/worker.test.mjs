@@ -4,6 +4,30 @@ import assert from 'node:assert/strict';
 import { prepareChat, classify, equalSecret, normalizeAccount, jwtExpiry, aggregateSSE, GatewayError } from '../src/protocol.mjs';
 import { Coordinator } from '../src/coordinator.mjs';
 import { Upstream } from '../src/upstream.mjs';
+import worker from '../src/worker.mjs';
+
+test('secret: public worker authenticates before bootstrap; health is liveness only', async () => {
+  const env = { API_KEY: 'a'.repeat(32), ADMIN_KEY: 'b'.repeat(32), LB2A_AUTHS: '{"uid":"u1","accessToken":"t"}' };
+  const c = makeCoordinator(env);
+  env.COORDINATOR = { idFromName: () => 'primary', get: () => c };
+  assert.equal((await worker.fetch(new Request('https://x/health'), env)).status, 200);
+  assert.equal((await worker.fetch(new Request('https://x/admin/status'), env)).status, 401);
+  assert.equal((await worker.fetch(new Request('https://x/admin/status', { headers: { Authorization: 'Bearer ' + env.API_KEY } }), env)).status, 401);
+  assert.equal(c.storage.map.size, 0);
+  const response = await worker.fetch(new Request('https://x/admin/status', { headers: { Authorization: 'Bearer ' + env.ADMIN_KEY } }), env);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).accounts[0].uid, 'u1');
+});
+
+test('secret: scheduled worker bootstraps accounts without a client request', async () => {
+  const env = { API_KEY: 'a'.repeat(32), ADMIN_KEY: 'b'.repeat(32), LB2A_AUTHS: '{"uid":"u1","accessToken":"t"}' };
+  const c = makeCoordinator(env);
+  env.COORDINATOR = { idFromName: () => 'primary', get: () => c };
+  const pending = [];
+  await worker.scheduled({}, env, { waitUntil: p => pending.push(p) });
+  await Promise.all(pending);
+  assert.deepEqual((await c.storage.get('maintenance')).pending, ['u1']);
+});
 
 test('prepareChat validates and forces stream', () => {
   assert.throws(() => prepareChat({ messages: [] }), GatewayError);
@@ -78,6 +102,89 @@ function makeCoordinator(env) {
   env.storage = fakeStorage();
   return new Coordinator({ storage: env.storage }, env);
 }
+
+test('secret: first authenticated DO request imports nested credentials', async () => {
+  const c = makeCoordinator({ LB2A_AUTHS: JSON.stringify({ auth: { accessToken: 't', refreshToken: 'r' }, account: { uid: 'u1' } }) });
+  const res = await c.fetch(new Request('https://x/admin/status'));
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).accounts[0].uid, 'u1');
+  assert.equal((await c.storage.get('account:u1')).refreshToken, 'r');
+});
+
+test('secret: restart, formatting, ordering and added accounts never revert rotated tokens', async () => {
+  const first = { uid: 'u1', accessToken: 'old', refreshToken: 'old-r' };
+  const env = { LB2A_AUTHS: JSON.stringify(first) }; const c = makeCoordinator(env);
+  await c.bootstrapAccounts();
+  const a = await c.storage.get('account:u1');
+  a.accessToken = 'rotated'; a.refreshToken = 'rotated-r';
+  await c.save(a);
+  env.LB2A_AUTHS = JSON.stringify([{ uid: 'u2', accessToken: 'two' }, { refreshToken: 'old-r', accessToken: 'old', uid: 'u1' }], null, 2);
+  const restarted = new Coordinator({ storage: c.storage }, env);
+  await restarted.bootstrapAccounts();
+  assert.equal((await c.storage.get('account:u1')).accessToken, 'rotated');
+  assert.equal((await c.storage.get('account:u1')).refreshToken, 'rotated-r');
+  assert.equal((await c.accounts()).length, 2);
+});
+
+test('secret: changed credentials update once while preserving pool state', async () => {
+  const env = { LB2A_AUTHS: '{"uid":"u1","accessToken":"old"}' }; const c = makeCoordinator(env);
+  await c.bootstrapAccounts();
+  const a = await c.storage.get('account:u1');
+  Object.assign(a, { disabled: true, refreshPending: true, credits: 42, checkinKey: 'stable', reason: 'no_credit', cooldownUntil: Date.now() + 60000 });
+  await c.save(a);
+  env.LB2A_AUTHS = '{"uid":"u1","accessToken":"new"}';
+  await c.bootstrapAccounts();
+  const saved = await c.storage.get('account:u1');
+  assert.equal(saved.accessToken, 'new'); assert.equal(saved.disabled, false);
+  assert.equal(saved.refreshPending, false); assert.equal(saved.credits, 42);
+  assert.equal(saved.checkinKey, 'stable'); assert.equal(saved.cooldownUntil, a.cooldownUntil);
+});
+
+test('secret: absent/removed secret retains accounts and markers', async () => {
+  const env = { LB2A_AUTHS: '{"uid":"u1","accessToken":"t"}' }; const c = makeCoordinator(env);
+  await c.bootstrapAccounts();
+  const before = structuredClone(c.storage.map);
+  for (const raw of [undefined, null, '']) { env.LB2A_AUTHS = raw; await c.bootstrapAccounts(); }
+  assert.deepEqual(c.storage.map, before);
+});
+
+test('secret: invalid batches fail without partial imports or credential leakage', async () => {
+  for (const raw of ['secret-invalid-json', '{}', '[]', 'null', '[{"uid":"u1","accessToken":"private"},{}]', '[{"uid":"u1","accessToken":"private"},{"uid":"u1","accessToken":"private"}]', 'x'.repeat(1048577)]) {
+    const c = makeCoordinator({ LB2A_AUTHS: raw });
+    const response = await c.fetch(new Request('https://x/admin/status'));
+    assert.equal(response.status, 503);
+    const text = await response.text();
+    assert.ok(text.includes('configuration_error'));
+    assert.ok(!text.includes('private')); assert.ok(!text.includes('secret-invalid-json'));
+    assert.equal(c.storage.map.size, 0);
+  }
+});
+
+test('secret: combined pool limit is validated before any write', async () => {
+  const docs = Array.from({ length: 20 }, (_, i) => ({ uid: 'u' + i, accessToken: 't' }));
+  const c = makeCoordinator({ LB2A_AUTHS: JSON.stringify(docs) });
+  await c.save({ uid: 'existing', accessToken: 't' });
+  await assert.rejects(c.bootstrapAccounts(), e => e.code === 'configuration_error');
+  assert.equal(c.storage.map.size, 1);
+});
+
+test('secret: failed atomic write is retried; concurrent requests import once', async () => {
+  const c = makeCoordinator({ LB2A_AUTHS: '{"uid":"u1","accessToken":"t"}' });
+  const put = c.storage.put.bind(c.storage); let writes = 0;
+  c.storage.put = async (...args) => { writes++; if (writes === 1) throw new Error('storage unavailable'); return put(...args); };
+  assert.equal((await c.fetch(new Request('https://x/admin/status'))).status, 502);
+  assert.equal(c.storage.map.size, 0);
+  const responses = await Promise.all(Array.from({ length: 5 }, () => c.fetch(new Request('https://x/admin/status'))));
+  assert.ok(responses.every(r => r.status === 200));
+  assert.equal(writes, 2);
+});
+
+test('secret: maintenance trigger bootstraps before queuing accounts', async () => {
+  const c = makeCoordinator({ LB2A_AUTHS: '{"uid":"u1","accessToken":"t"}' });
+  const res = await c.fetch(new Request('https://x/admin/maintenance', { method: 'POST' }));
+  assert.equal(res.status, 202);
+  assert.deepEqual((await c.storage.get('maintenance')).pending, ['u1']);
+});
 
 test('coordinator: import, status, pick skips cooled-down accounts', async () => {
   const env = {}; const c = makeCoordinator(env);
