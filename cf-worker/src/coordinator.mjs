@@ -12,8 +12,9 @@ const MODELS_TTL = 3600000;                // dynamic model list cache: 1h
 // Errors that swapping accounts cannot fix: the request itself is unusable.
 const NON_ROTATABLE = new Set(['invalid_request', 'configuration_error', 'cancelled']);
 
-// Static model table, measured 2026-08-06 from GET /api/models/available (19 entries, same as the Go build).
+// Static fallback table: 25 IDs observed from local GET /v1/models on 2026-09-17.
 const STATIC_MODEL_IDS = [
+  'deepseek-flash', 'deepseek-v4-flash-vision-exp', 'glm-5.3-flash', 'glm-5.3', 'qwen3.8-max', 'qwen3.8-flash',
   'deepseek-v4-flash', 'deepseek-v4-pro', 'MiniMax-M3', 'MiniMax-M2.7', 'qwen3.7-max', 'qwen3.7-plus', 'qwen3.6-plus',
   'qwen3.5-plus-2026-04-20', 'kimi-k2.7-code', 'kimi-k2.7-code-highspeed', 'kimi-k2.6', 'kimi-k2.5',
   'doubao-seed-2-1-pro-260628', 'doubao-seed-2-1-turbo-260628', 'doubao-seed-2-0-code-preview-260215',

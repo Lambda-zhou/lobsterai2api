@@ -329,6 +329,10 @@ test('regression: models falls back to the static table when upstream is unusabl
   const body = await res.json();
   assert.equal(body.object, 'list');
   assert.equal(body.source, 'static');
-  assert.equal(body.data.length, 19);
-  assert.ok(body.data.some(m => m.id === 'glm-5'));
+  assert.equal(body.data.length, 25);
+  const ids = new Set(body.data.map(m => m.id));
+  assert.equal(ids.size, 25); // No duplicate model IDs.
+  for (const id of ['deepseek-flash', 'deepseek-v4-flash-vision-exp', 'glm-5.3-flash', 'glm-5.3', 'qwen3.8-max', 'qwen3.8-flash', 'glm-5']) {
+    assert.ok(ids.has(id), `Missing fallback model: ${id}`);
+  }
 });

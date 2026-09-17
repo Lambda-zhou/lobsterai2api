@@ -63,7 +63,7 @@ wrangler secret put ADMIN_KEY  # /admin 鉴权
 
 ## 端点
 
-- `GET /v1/models` — 上游动态模型（带 keyfrom 查询参数），结果缓存 1h；上游不可用时回退到 19 个静态模型并标注 `source: "static"`
+- `GET /v1/models` — 上游动态模型（带 keyfrom 查询参数），结果缓存 1h；上游不可用时回退到 25 个静态模型并标注 `source: "static"`
 - `POST /v1/chat/completions` — stream=true 时逐块转发上游 SSE（响应头 content-type/cache-control/x-accel-buffering 由本服务重建）；false 时在 DO 锁外聚合为完整 JSON
 - `GET /health` 存活探测（不需要密钥，不代表上游可用）
 
